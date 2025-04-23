@@ -248,7 +248,7 @@ def DA_nhoods(adata, design, model_contrasts=None, subset_samples=None, add_inte
         design = design + ' + 0'
     model = stats.model_matrix(object=stats.formula(
         design), data=design_df)
-
+    
     # Fit NB-GLM
     dge = edgeR.DGEList(
         counts=count_mat[keep_nhoods, :][:, keep_smp], lib_size=lib_size[keep_smp])
@@ -259,9 +259,18 @@ def DA_nhoods(adata, design, model_contrasts=None, subset_samples=None, add_inte
     # Test
     n_coef = model.shape[1]
     if model_contrasts is not None:
+        #r_str = '''
+        #get_model_cols <- function(design_df, design){
+        #    m = model.matrix(object=formula(design), data=design_df)
+        #    return(colnames(m))
+        #}
+        #'''
+        # Monkey‐patch get_model_cols to force R‐valid names (':' → '.')
         r_str = '''
         get_model_cols <- function(design_df, design){
-            m = model.matrix(object=formula(design), data=design_df)
+            m <- model.matrix(object=formula(design), data=design_df)
+            # sanitize column names so limma::makeContrasts can accept them
+            colnames(m) <- make.names(colnames(m), unique=TRUE)
             return(colnames(m))
         }
         '''
@@ -288,6 +297,9 @@ def DA_nhoods(adata, design, model_contrasts=None, subset_samples=None, add_inte
     res.index = nhood_adata.obs_names[keep_nhoods]
     if any([x in nhood_adata.obs.columns for x in res.columns]):
         nhood_adata.obs = nhood_adata.obs.drop(res.columns, axis=1)
+   # to_drop = [x for x in res.columns if x in nhood_adata.obs.columns]
+   # if to_drop:
+   #     nhood_adata.obs = nhood_adata.obs.drop(to_drop, axis = 1)
     nhood_adata.obs = pd.concat([nhood_adata.obs, res], axis=1)
 
     # Run Graph spatial FDR correction
