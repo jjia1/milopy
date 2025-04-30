@@ -123,12 +123,17 @@ def make_nhoods(
     else:
         k = adata.uns[neighbors_key]["params"]["n_neighbors"]
         knn_dists = adata.obsp[neighbors_key + "_distances"]
-    nhood_ixs = adata.obs["nhood_ixs_refined"] == 1
-    dist_mat = knn_dists[nhood_ixs, :]
+    # --- FIX: convert pandas Series → numpy mask & integer indices ---
+    mask = adata.obs["nhood_ixs_refined"].to_numpy().astype(bool)
+    row_idx = np.nonzero(mask)[0]              # integer positions of refined cells
+
+    # now integer‐index the sparse matrix
+    dist_mat = knn_dists[row_idx, :]
     k_distances = dist_mat.max(1).toarray().ravel()
+
+    # write back
     adata.obs["nhood_kth_distance"] = 0
-    adata.obs.loc[adata.obs["nhood_ixs_refined"]
-                  == 1, "nhood_kth_distance"] = k_distances
+    adata.obs.loc[mask, "nhood_kth_distance"] = k_distances
 
 
 def count_nhoods(
@@ -259,12 +264,6 @@ def DA_nhoods(adata, design, model_contrasts=None, subset_samples=None, add_inte
     # Test
     n_coef = model.shape[1]
     if model_contrasts is not None:
-        #r_str = '''
-        #get_model_cols <- function(design_df, design){
-        #    m = model.matrix(object=formula(design), data=design_df)
-        #    return(colnames(m))
-        #}
-        #'''
         # Monkey‐patch get_model_cols to force R‐valid names (':' → '.')
         r_str = '''
         get_model_cols <- function(design_df, design){
