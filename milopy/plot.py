@@ -7,6 +7,7 @@ from anndata import AnnData
 
 import matplotlib.pyplot as plt
 import seaborn as sns
+import math
 
 
 def plot_nhood_graph(
@@ -38,36 +39,88 @@ def plot_nhood_graph(
             'Cannot find "Nhood_size" column in adata.uns["nhood_adata"].obs -- \
                 please run milopy.utils.build_nhood_graph(adata)'
         )
+    
+   # find all logFC columns
+    logfc_cols = [c for c in nhood_adata.obs.columns if c.startswith("logFC")]
 
-    nhood_adata.obs["graph_color"] = nhood_adata.obs["logFC"]
-    nhood_adata.obs.loc[nhood_adata.obs["SpatialFDR"]
-                        > alpha, "graph_color"] = np.nan
-    nhood_adata.obs["abs_logFC"] = abs(nhood_adata.obs["logFC"])
-    nhood_adata.obs.loc[nhood_adata.obs["abs_logFC"]
-                        < min_logFC, "graph_color"] = np.nan
+    # helper to prepare a sub‐AnnData for a given contrast
+    def _prepare(sub_adata, fc_col):
+        obs = sub_adata.obs.copy()
+        obs["graph_color"] = obs[fc_col]
+        # mask non‐significant by FDR
+        obs.loc[obs["SpatialFDR"] > alpha, "graph_color"] = np.nan
+        # mask small effects
+        obs["abs_logFC"] = obs[fc_col].abs()
+        obs.loc[obs["abs_logFC"] < min_logFC, "graph_color"] = np.nan
+        # ensure masked points go to bottom
+        obs.loc[obs["graph_color"].isna(), "abs_logFC"] = np.nan
+        # reorder cells
+        ordered = obs.sort_values("abs_logFC", na_position="first").index
+        sub = sub_adata[ordered].copy()
+        sub.obs = obs.loc[ordered]
+        return sub
 
-    # Plotting order - extreme logFC on top
-    nhood_adata.obs.loc[nhood_adata.obs["graph_color"].isna(),
-                        "abs_logFC"] = np.nan
-    ordered = nhood_adata.obs.sort_values(
-        'abs_logFC', na_position='first').index
-    nhood_adata = nhood_adata[ordered]
+    # multiple‐contrast grid
+    if len(logfc_cols) > 1:
+        n = len(logfc_cols)
+        ncols = min(4, n)
+        nrows = math.ceil(n / ncols)
+        fig, axes = plt.subplots(nrows, ncols, figsize=(5 * ncols, 5 * nrows))
+        axes = axes.flatten()
 
-    vmax = np.max([nhood_adata.obs["graph_color"].max(),
-                  abs(nhood_adata.obs["graph_color"].min())])
-    vmin = - vmax
+        for ax, fc_col in zip(axes, logfc_cols):
+            sub = _prepare(nhood_adata, fc_col)
+            vmax = max(sub.obs["graph_color"].max(), -sub.obs["graph_color"].min())
+            vmin = -vmax
 
-    sc.pl.embedding(nhood_adata, "X_milo_graph",
-                    color="graph_color", cmap="RdBu_r",
-                    size=adata.uns["nhood_adata"].obs["Nhood_size"]*min_size,
-                    edges=plot_edges, neighbors_key="nhood",
-                    # edge_width =
-                    sort_order=False,
-                    frameon=False,
-                    vmax=vmax, vmin=vmin,
-                    title=title,
-                    **kwargs
-                    )
+            sc.pl.embedding(
+                sub,
+                basis="X_milo_graph",
+                color="graph_color",
+                cmap="RdBu_r",
+                size=sub.obs["Nhood_size"] * min_size,
+                edges=plot_edges,
+                neighbors_key="nhood",
+                sort_order=False,
+                frameon=False,
+                vmax=vmax,
+                vmin=vmin,
+                ax=ax,
+                show=False,
+                **kwargs
+            )
+            ax.set_title(fc_col)
+
+        # hide any unused axes
+        for ax in axes[len(logfc_cols) :]:
+            ax.axis("off")
+
+        fig.suptitle(title)
+        plt.tight_layout()
+        plt.show()
+        return fig
+
+    # single‐contrast fallback
+    fc_col = logfc_cols[0] if logfc_cols else "logFC"
+    sub = _prepare(nhood_adata, fc_col)
+    vmax = max(sub.obs["graph_color"].max(), -sub.obs["graph_color"].min())
+    vmin = -vmax
+
+    sc.pl.embedding(
+        sub,
+        basis="X_milo_graph",
+        color="graph_color",
+        cmap="RdBu_r",
+        size=sub.obs["Nhood_size"] * min_size,
+        edges=plot_edges,
+        neighbors_key="nhood",
+        sort_order=False,
+        frameon=False,
+        vmax=vmax,
+        vmin=vmin,
+        title=title,
+        **kwargs
+    )
 
 
 def plot_nhood(adata, ix, basis="X_umap"):
